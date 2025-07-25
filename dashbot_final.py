@@ -120,6 +120,9 @@ app.layout = dbc.Container([
 def update_graph(n1, n2, n3, n_intervals):
     global initial_data
     ctx = dash.callback_context.triggered_id
+    if not ctx:
+        return dash.no_update  # Prevents an error if no button is pressed
+    
     crash_point = None
     multiplier = 1.0
 
@@ -152,4 +155,3 @@ def update_graph(n1, n2, n3, n_intervals):
 # ✅ Final Correct Run Method for Dash 3.x+
 if __name__ == "__main__":
     app.run(debug=True)
-
