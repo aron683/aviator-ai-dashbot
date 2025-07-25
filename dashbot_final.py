@@ -7,13 +7,14 @@ import joblib
 import os
 import random
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.preprocessing import MinMaxScaler
 import dash_bootstrap_components as dbc
-import xgboost as xgb  # Added XGBoost for better performance
+import xgboost as xgb  # XGBoost for better performance
 
 # === GLOBAL CONFIG ===
 DATA_FILE = "yourdata.csv"
 MODEL_RF = "model_rf.pkl"
-MODEL_XGB = "model_xgb.pkl"  # New model for XGBoost
+MODEL_XGB = "model_xgb.pkl"
 SCALER_FILE = "scaler.pkl"
 MAX_HISTORY = 100
 ACTIONS = [1.2, 1.5, 1.8, 2.0, 2.5]
@@ -32,34 +33,47 @@ def load_data():
         initial_data = [round(random.expovariate(1/2.0) + 1, 2) for _ in range(20)]
         pd.DataFrame(initial_data, columns=["multiplier"]).to_csv(DATA_FILE, index=False)
 
-# === Feature Engineering Function ===
+# === Feature Engineering ===
 def create_features(df):
-    # Adding additional features for better prediction
-    df['previous'] = df['multiplier'].shift(1)
-    df['change'] = df['multiplier'] - df['previous']
-    df['rolling_mean'] = df['multiplier'].rolling(window=5).mean()
-    df['rolling_std'] = df['multiplier'].rolling(window=5).std()
-    df['volatility'] = (df['multiplier'] - df['rolling_mean']) / df['rolling_std']
-    df = df.dropna()
+    df["previous"] = df["multiplier"].shift(1)
+    df["change"] = df["multiplier"].pct_change()
+    df["rolling_mean"] = df["multiplier"].rolling(window=3).mean()
+    df["rolling_std"] = df["multiplier"].rolling(window=3).std()
+    df["volatility"] = df["rolling_std"] / df["rolling_mean"]
     return df
 
-# === Train RandomForest and XGBoost Models ===
-def train_models():
+# === Train RandomForest ===
+def train_rf_model():
     df = pd.read_csv(DATA_FILE)
     df = create_features(df)
-
     X = df[['previous', 'change', 'rolling_mean', 'rolling_std', 'volatility']]
     y = (df["multiplier"].shift(-1) >= 2).astype(int)  # Binary target: 1 if multiplier >= 2, else 0
-
-    # Train RandomForest
     model_rf = RandomForestClassifier(n_estimators=100)
     model_rf.fit(X, y)
     joblib.dump(model_rf, MODEL_RF)
 
-    # Train XGBoost
+# === Train XGBoost ===
+def train_xgb_model():
+    df = pd.read_csv(DATA_FILE)
+    df = create_features(df)
+    X = df[['previous', 'change', 'rolling_mean', 'rolling_std', 'volatility']]
+    y = (df["multiplier"].shift(-1) >= 2).astype(int)  # Binary target: 1 if multiplier >= 2, else 0
     model_xgb = xgb.XGBClassifier(n_estimators=100, learning_rate=0.1)
     model_xgb.fit(X, y)
     joblib.dump(model_xgb, MODEL_XGB)
+
+# === Train Reinforcement Learning (Q-learning) ===
+def train_reinforcement():
+    global q_table
+    q_table = {a: 0 for a in ACTIONS}
+    data = pd.read_csv(DATA_FILE)["multiplier"].tolist()
+
+    for _ in range(300):
+        for i in range(5, len(data)):
+            outcome = data[i]
+            action = random.choice(ACTIONS)
+            reward = 1 if outcome >= action else -1
+            q_table[action] += 0.1 * (reward + 0.9 * max(q_table.values()) - q_table[action])
 
 # === Predict Functions ===
 def predict_rf():
@@ -76,14 +90,10 @@ def predict_xgb():
     label = "🟢 GO" if prob > 0.7 else "⚪ WAIT" if prob > 0.4 else "🔴 NO"
     return label, round(prob * 100, 1)
 
-# === Simulate Round Function ===
+# === Simulation of Next Round ===
 def simulate_round():
-    # Simulate the "Crash" game
-    crash_point = round(random.expovariate(1/2.0) + 1, 2)  # The point at which the game crashes
-    multiplier = 1.0  # The current multiplier
-    while multiplier < crash_point:
-        multiplier += random.uniform(0.05, 0.1)  # Increment multiplier over time (simulating crash)
-    return crash_point, round(multiplier, 2)
+    # Simulating the next round multiplier for demonstration
+    return round(random.expovariate(1/2.0) + 1, 2)
 
 # === Dash App ===
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
@@ -102,10 +112,9 @@ app.layout = dbc.Container([
         dbc.Col([
             dcc.Graph(id="live-graph"),
             html.Div(id="signals", className="text-center fs-4 mt-4"),
-            html.Div(id="round-info", className="text-center mt-4"),
+            html.Div(id="round-info", className="text-center fs-4 mt-4"),
         ], md=9)
-    ]),
-    dcc.Interval(id="interval-update", interval=1000, n_intervals=0)  # 1 second interval for graph update
+    ])
 ], fluid=True)
 
 @app.callback(
@@ -114,22 +123,20 @@ app.layout = dbc.Container([
      Output("round-info", "children")],
     [Input("btn-load", "n_clicks"),
      Input("btn-train", "n_clicks"),
-     Input("btn-sim", "n_clicks"),
-     Input("interval-update", "n_intervals")]
+     Input("btn-sim", "n_clicks")]
 )
-def update_graph(n1, n2, n3, n_intervals):
+def update_graph(n1, n2, n3):
     global initial_data
     ctx = dash.callback_context.triggered_id
-    if not ctx:
-        return dash.no_update  # Prevents an error if no button is pressed
-    
     crash_point = None
     multiplier = 1.0
 
     if ctx == "btn-load":
         load_data()
     elif ctx == "btn-train":
-        train_models()
+        train_rf_model()
+        train_xgb_model()
+        train_reinforcement()
     elif ctx == "btn-sim":
         crash_point, multiplier = simulate_round()
         initial_data.append(multiplier)
@@ -142,7 +149,7 @@ def update_graph(n1, n2, n3, n_intervals):
                             mode='lines+markers', name='Crash Multipliers'))
     fig.update_layout(title="Crash History", xaxis_title="Round", yaxis_title="Multiplier")
 
-    # Display the hybrid decision, Random Forest, and Q-learning outputs
+    # Display the hybrid decision, Random Forest, and XGBoost outputs
     rf_label, rf_prob = predict_rf()
     xgb_label, xgb_prob = predict_xgb()
 
