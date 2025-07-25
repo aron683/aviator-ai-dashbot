@@ -8,14 +8,11 @@ import os
 import random
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import MinMaxScaler
-from tensorflow.keras.models import Sequential, load_model
-from tensorflow.keras.layers import LSTM, Dense
 import dash_bootstrap_components as dbc
 
 # === GLOBAL CONFIG ===
 DATA_FILE = "yourdata.csv"
 MODEL_RF = "model_rf.pkl"
-MODEL_LSTM = "lstm_model.h5"
 SCALER_FILE = "scaler.pkl"
 MAX_HISTORY = 100
 ACTIONS = [1.2, 1.5, 1.8, 2.0, 2.5]
@@ -46,30 +43,6 @@ def train_rf_model():
     model.fit(X, y)
     joblib.dump(model, MODEL_RF)
 
-# === Train LSTM ===
-def train_lstm():
-    df = pd.read_csv(DATA_FILE)
-    values = df["multiplier"].values.reshape(-1, 1)
-    scaler = MinMaxScaler()
-    scaled = scaler.fit_transform(values)
-
-    X, y = [], []
-    window = 5
-    for i in range(window, len(scaled) - 1):
-        X.append(scaled[i-window:i])
-        y.append(1 if scaled[i][0] >= scaler.transform([[2]])[0][0] else 0)
-
-    X, y = np.array(X), np.array(y)
-
-    model = Sequential()
-    model.add(LSTM(64, input_shape=(X.shape[1], X.shape[2])))
-    model.add(Dense(1, activation='sigmoid'))
-    model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
-    model.fit(X, y, epochs=10, batch_size=16, verbose=0)
-
-    model.save(MODEL_LSTM)
-    joblib.dump(scaler, SCALER_FILE)
-
 # === Train Reinforcement Learning (Q-learning) ===
 def train_reinforcement():
     global q_table
@@ -93,24 +66,13 @@ def predict_rf():
     label = "🟢 GO" if prob > 0.7 else "⚪ WAIT" if prob > 0.4 else "🔴 NO"
     return label, round(prob * 100, 1)
 
-def predict_lstm():
-    if len(initial_data) < 6:
-        return "⚠️ Not enough data", 0.0
-    model = load_model(MODEL_LSTM)
-    scaler = joblib.load(SCALER_FILE)
-    X = scaler.transform(np.array(initial_data[-5:]).reshape(-1, 1)).reshape(1, 5, 1)
-    prob = model.predict(X)[0][0]
-    label = "🟢 GO" if prob > 0.7 else "⚪ WAIT" if prob > 0.4 else "🔴 NO"
-    return label, round(prob * 100, 1)
-
 def hybrid_decision():
     rf_label, rf_prob = predict_rf()
-    lstm_label, lstm_prob = predict_lstm()
     rl_target = max(q_table, key=q_table.get)
-    hybrid_score = (0.4 * (rf_prob / 100)) + (0.5 * (lstm_prob / 100)) + (0.1 * (1 if rl_target <= 2 else 0.5))
+    hybrid_score = (0.85 * (rf_prob / 100)) + (0.15 * (1 if rl_target <= 2 else 0.5))
 
     decision = "🟢 STRONG ENTRY" if hybrid_score > 0.75 else "⚪ CAUTION" if hybrid_score > 0.55 else "🔴 SKIP ROUND"
-    return decision, rf_label, lstm_label, rl_target
+    return decision, rf_label, rl_target
 
 # === Load Data Initially ===
 load_data()
@@ -151,7 +113,6 @@ def update_graph(n1, n2, n3):
         load_data()
     elif ctx == "btn-train":
         train_rf_model()
-        train_lstm()
         train_reinforcement()
     elif ctx == "btn-sim":
         next_val = round(random.expovariate(1/2.0) + 1, 2)
@@ -164,16 +125,14 @@ def update_graph(n1, n2, n3):
                              mode='lines+markers', name='Crash Multipliers'))
     fig.update_layout(title="Crash History", xaxis_title="Round", yaxis_title="Multiplier")
 
-    hybrid, rf, lstm, rl = hybrid_decision()
+    hybrid, rf, rl = hybrid_decision()
     text = f"""
-    🧠 Voting Signal: {hybrid}  
+    🧠 Signal: {hybrid}  
     🌲 RandomForest: {rf}  
-    🔮 LSTM Model: {lstm}  
     🎯 Cashout Target (RL): {rl}x  
     """
-
     return fig, text.replace("  ", "<br>")
 
-# === Run the App ===
+# ✅ Final Correct Run Method for Dash 3.x+
 if __name__ == "__main__":
-    app.run_server(debug=True)
+    app.run(debug=True)
