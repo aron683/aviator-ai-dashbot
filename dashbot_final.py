@@ -68,7 +68,7 @@ def predict_rf():
 
 def hybrid_decision():
     rf_label, rf_prob = predict_rf()
-    rl_target = max(q_table, key=q_table.get)
+    rl_target = max(q_table, key=q_table.get) if q_table else 2  # Default value if q_table is empty
     hybrid_score = (0.85 * (rf_prob / 100)) + (0.15 * (1 if rl_target <= 2 else 0.5))
 
     decision = "🟢 STRONG ENTRY" if hybrid_score > 0.75 else "⚪ CAUTION" if hybrid_score > 0.55 else "🔴 SKIP ROUND"
@@ -120,16 +120,17 @@ def update_graph(n1, n2, n3):
         initial_data = initial_data[-MAX_HISTORY:]
         pd.DataFrame(initial_data, columns=["multiplier"]).to_csv(DATA_FILE, index=False)
 
+    # Ensure the graph renders properly even if there's no data yet
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=list(range(len(initial_data))), y=initial_data,
-                             mode='lines+markers', name='Crash Multipliers'))
+                            mode='lines+markers', name='Crash Multipliers'))
     fig.update_layout(title="Crash History", xaxis_title="Round", yaxis_title="Multiplier")
 
     hybrid, rf, rl = hybrid_decision()
     text = f"""
-    🧠 Signal: {hybrid}  
-    🌲 RandomForest: {rf}  
-    🎯 Cashout Target (RL): {rl}x  
+    🧠 Signal: {hybrid}   
+    🌲 RandomForest: {rf}   
+    🎯 Cashout Target (RL): {rl}x   
     """
     return fig, text.replace("  ", "<br>")
 
